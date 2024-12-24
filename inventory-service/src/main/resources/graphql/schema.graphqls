@@ -1,0 +1,8 @@
+type Query {
+    checkInventory(skuCodes: [String!]!): [InventoryResponse!]!
+}
+
+type InventoryResponse {
+    skuCode: String!
+    isInStock: Boolean!
+}

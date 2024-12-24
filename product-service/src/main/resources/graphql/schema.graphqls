@@ -1,0 +1,22 @@
+type Query {
+    getAllProducts: [Product!]!
+}
+
+type Mutation {
+    createProduct(product: ProductInput!): Product!
+}
+
+type Product {
+    id: ID!
+    name: String!
+    description: String
+    price: Float!
+    # Add other fields that are in your ProductResponse
+}
+
+input ProductInput {
+    name: String!
+    description: String
+    price: Float!
+    # Add other fields that are in your ProductRequest
+}

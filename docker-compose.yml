@@ -1,0 +1,212 @@
+version: "3"
+services:
+
+  mysql-order:
+    container_name: mysql-order
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: orders
+      MYSQL_USER: laamiri
+      MYSQL_PASSWORD: mysql
+    volumes:
+      - ./mysql_order:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    restart: always
+
+
+  mysql-inventory:
+    container_name: mysql-inventory
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: inventories
+      MYSQL_USER: laamiri
+      MYSQL_PASSWORD: laamiri
+    volumes:
+      - ./mysql_inventory:/var/lib/mysql
+    ports:
+      - "3308:3306"
+    restart: always
+
+
+  mongo:
+    container_name: mongo
+    image: mongo:latest
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - ./mongo-data:/data/db
+
+
+
+  keycloak-mysql:
+    container_name: keycloak-mysql
+    image: mysql:latest
+    volumes:
+      - ./mysql_keycloak_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: keycloak
+      MYSQL_USER: laamiri
+      MYSQL_PASSWORD: laamiri
+
+  # Keycloak Config
+  keycloak:
+    container_name: keycloak
+    image: quay.io/keycloak/keycloak:latest
+    command: [ "start-dev", "--import-realm" ]
+    environment:
+      DB_VENDOR: MYSQL
+      DB_ADDR: mysql
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_PASSWORD: password
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realms/:/opt/keycloak/data/import/
+    depends_on:
+      - keycloak-mysql
+
+
+  # Apache Kafka (Zookeeper) Config
+  zookeeper:
+    image: laamirikhadija/cp-zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # Apache Kafka (Broker) Config
+  broker:
+    image: laamirikhadija/cp-kafka:latest
+    container_name: broker
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://broker:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+
+  # Zipkin Config
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+
+
+  # Discovery Server (Eureka Server) Config
+  discovery-server:
+    image: laamirikhadija/discovery-server:latest
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SERVER_PORT=8761
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      - zipkin
+
+  # API Gateway Service Config
+  api-gateway:
+    image: laamirikhadija/api-gateway:latest
+    container_name: api-gateway
+    ports:
+      - "8181:8080"
+    expose:
+      - "8181"
+    environment:
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=TRACE
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-server:8761/eureka
+      - SERVER_PORT=8080
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI=http://keycloak:8080/realms/spring-boot-microservices-realm
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      - zipkin
+      - discovery-server
+      - keycloak
+
+  # Product Service Config
+  product-service:
+    container_name: product-service
+    image: laamirikhadija/product-service:latest
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongo:27017/product-service
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-server:8761/eureka/
+      - SERVER_PORT=8080
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      - mongo
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+  # Order Service Config
+  order-service:
+    container_name: order-service
+    image: laamirikhadija/order-service:latest
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-order:3306/orders?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=laamiri
+      - SPRING_DATASOURCE_PASSWORD=laamiri
+      - SERVER_PORT=8080
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-server:8761/eureka/
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SPRING_KAFKA_BOOTSTRAPSERVERS=broker:29092
+    depends_on:
+      - mysql-order
+      - broker
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+  # Inventory Service Config
+  inventory-service:
+    container_name: inventory-service
+    image: laamirikhadija/inventory-service:latest
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-inventory:3306/inventories?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=laamiri
+      - SPRING_DATASOURCE_PASSWORD=laamiri
+      - SERVER_PORT=8080
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-server:8761/eureka/
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      - mysql-inventory
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+  # Notification Service Config
+  notification-service:
+    container_name: notification-service
+    image: laamirikhadija/notification-service:latest
+    environment:
+      - SERVER_PORT=8080
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-server:8761/eureka
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=broker:29092
+    depends_on:
+      - broker
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+

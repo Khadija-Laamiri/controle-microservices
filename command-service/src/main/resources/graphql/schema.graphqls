@@ -1,0 +1,13 @@
+type Mutation {
+    placeOrder(order: OrderInput!): String!
+}
+
+input OrderInput {
+    orderNumber: String
+    items: [OrderItemInput!]
+}
+
+input OrderItemInput {
+    productId: String!
+    quantity: Int!
+}
